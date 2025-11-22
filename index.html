@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>The Tremor Tracker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f7fb;
+      color: #222;
+    }
+    .page {
+      max-width: 1100px;
+      margin: 20px auto;
+      padding: 20px;
+      background: #ffffff;
+      border-radius: 16px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.06);
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 28px;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 24px;
+    }
+    .card {
+      background: #fafbff;
+      border-radius: 14px;
+      padding: 16px 18px;
+      border: 1px solid #e0e3f0;
+    }
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+    #canvas {
+      border-radius: 12px;
+      border: 1px dashed #c2c7e0;
+      background: #ffffff;
+      cursor: crosshair;
+    }
+    .controls {
+      margin-top: 10px;
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    button {
+      border-radius: 999px;
+      border: none;
+      padding: 8px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      background: #4f46e5;
+      color: white;
+    }
+    button.secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+    #result-box {
+      margin-top: 10px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: #f3f4ff;
+      border: 1px solid #d4d7ff;
+      min-height: 60px;
+      font-size: 14px;
+      white-space: pre-line;
+    }
+    .pill {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 11px;
+      background: #eef2ff;
+      color: #4338ca;
+      margin-bottom: 6px;
+    }
+    #upload-section {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px dashed #e0e3f0;
+    }
+    input[type="file"] {
+      font-size: 13px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page">
+    <h1>🌀 The Tremor Tracker</h1>
+    <p style="margin-top:4px; font-size:14px; color:#4b5563;">
+      Draw a spiral or upload a spiral image. The AI model will analyze tremor-like patterns.
+    </p>
+
+    <div class="layout">
+      <!-- LEFT: Drawing and upload -->
+      <div>
+        <div class="card">
+          <span class="pill">Step 1 — Input</span>
+          <h2>Draw a spiral</h2>
+
+          <canvas id="canvas" width="400" height="400"></canvas>
+
+          <div class="controls">
+            <button class="secondary" id="clearBtn">Clear</button>
+            <button id="analyzeDrawingBtn">Analyze Drawing</button>
+          </div>
+
+          <div id="upload-section">
+            <h3 style="font-size:15px; margin:10px 0 6px;">or Upload dataset spiral image</h3>
+            <input type="file" id="imageUpload" accept="image/*" />
+            <button id="analyzeUploadBtn" class="secondary">Analyze Uploaded Image</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Result -->
+      <div>
+        <div class="card">
+          <span class="pill">Step 2 — Screening Result</span>
+          <h2>Result</h2>
+          <div id="result-box">
+            No analysis yet. Draw or upload a spiral to begin.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    let drawing = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    function startDraw(e) {
+      drawing = true;
+      const rect = canvas.getBoundingClientRect();
+      lastX = e.clientX - rect.left;
+      lastY = e.clientY - rect.top;
+    }
+
+    function draw(e) {
+      if (!drawing) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      ctx.lineWidth = 4;
+      ctx.lineCap = "round";
+      ctx.strokeStyle = "#111827";
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      lastX = x;
+      lastY = y;
+    }
+
+    function endDraw() {
+      drawing = false;
+    }
+
+    canvas.addEventListener("mousedown", startDraw);
+    canvas.addEventListener("mousemove", draw);
+    canvas.addEventListener("mouseup", endDraw);
+    canvas.addEventListener("mouseleave", endDraw);
+
+    document.getElementById("clearBtn").addEventListener("click", () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      document.getElementById("result-box").textContent =
+        "Canvas cleared. Draw a new spiral or upload an image.";
+    });
+
+    // ------------------ SHARED BACKEND CALL ------------------
+
+    async function sendToBackend(file) {
+      const resultBox = document.getElementById("result-box");
+      resultBox.textContent = "Analyzing… please wait.";
+
+      const formData = new FormData();
+      formData.append("spiral", file);
+
+      try {
+        const response = await fetch("http://127.0.0.1:8001/analyze", {
+          method: "POST",
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error("Server error: " + response.status);
+        }
+
+        const data = await response.json();
+
+        const statusText = data.decision
+          ? "YES — Parkinson-like tremor patterns detected."
+          : "NO — No strong Parkinson-like tremor patterns detected.";
+
+        resultBox.textContent =
+          statusText +
+          "\n\n" +
+          "Model probability (Parkinson): " +
+          data.probability.toFixed(3) +
+          "\n" +
+          data.message;
+
+      } catch (err) {
+        console.error(err);
+        resultBox.textContent =
+          "❌ Error: Could not reach backend or parse response.\n" + err;
+      }
+    }
+
+    // Analyze drawing: send canvas as PNG
+    async function analyzeDrawing() {
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          alert("Canvas is empty.");
+          return;
+        }
+        await sendToBackend(blob);
+      }, "image/png");
+    }
+
+    // Analyze uploaded file
+    async function analyzeUploadedImage() {
+      const input = document.getElementById("imageUpload");
+      if (!input.files || input.files.length === 0) {
+        alert("Please choose an image file first.");
+        return;
+      }
+      const file = input.files[0];
+      await sendToBackend(file);
+    }
+
+    document
+      .getElementById("analyzeDrawingBtn")
+      .addEventListener("click", analyzeDrawing);
+
+    document
+      .getElementById("analyzeUploadBtn")
+      .addEventListener("click", analyzeUploadedImage);
+  </script>
+</body>
+</html>
